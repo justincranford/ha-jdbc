@@ -22,6 +22,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutput;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -69,6 +70,7 @@ public class JGroupsCommandDispatcher<C> implements RequestHandler, CommandDispa
 	private final C context;
 	private final AtomicReference<View> viewReference = new AtomicReference<View>();
 	private final MembershipListener membershipListener;
+	private final List<MembershipListener> userMembershipListeners = new ArrayList<MembershipListener>();
 	private final Stateful stateful;
 	
 	/**
@@ -90,6 +92,10 @@ public class JGroupsCommandDispatcher<C> implements RequestHandler, CommandDispa
 		
 		this.dispatcher = new MessageDispatcher(channel, this, this, this);
 		this.timeout = timeout;
+	}
+
+	public void addUserMembershipListener(MembershipListener userMembershipListener) {
+		this.userMembershipListeners.add(userMembershipListener);
 	}
 
 	/**
@@ -246,26 +252,60 @@ public class JGroupsCommandDispatcher<C> implements RequestHandler, CommandDispa
 	@Override
 	public void viewAccepted(View view)
 	{
-		if (this.membershipListener != null)
+		// notify DistributedLockManager, DistributedStateManager, or user-defined MembershipListener instances of added and deleted members
+		if ((this.membershipListener != null) || (!this.userMembershipListeners.isEmpty()))
 		{
 			View oldView = this.viewReference.getAndSet(view);
-			
+
+			List<AddressMember> addedAddressMembers   = new ArrayList<AddressMember>();
+			List<AddressMember> removedAddressMembers = new ArrayList<AddressMember>();
+
+			// compute list of added members
 			for (Address address: view.getMembers())
 			{
 				if ((oldView == null) || !oldView.containsMember(address))
 				{
-					this.membershipListener.added(new AddressMember(address));
+					addedAddressMembers.add(new AddressMember(address));
 				}
 			}
 			
+			// compute list of removed members
 			if (oldView != null)
 			{
 				for (Address address: oldView.getMembers())
 				{
 					if (!view.containsMember(address))
 					{
-						this.membershipListener.removed(new AddressMember(address));
+						removedAddressMembers.add(new AddressMember(address));
 					}
+				}
+			}
+
+			// notify DistributedLockManager or DistributedStateManager of added and deleted members
+			if (this.membershipListener != null)
+			{
+				for (AddressMember addedAddressMember : addedAddressMembers)
+				{
+					this.membershipListener.added(addedAddressMember);
+				}
+
+				for (AddressMember removedAddressMember : removedAddressMembers)
+				{
+					this.membershipListener.removed(removedAddressMember);
+				}
+			}
+
+			// notify user-defined MembershipListener instances of added and deleted members too
+			for (MembershipListener userMembershipListener : this.userMembershipListeners)
+			{
+				for (AddressMember addedAddressMember : addedAddressMembers)
+				{
+					userMembershipListener.added(addedAddressMember);
+				}
+
+				for (AddressMember removedAddressMember : removedAddressMembers)
+				{
+					userMembershipListener.removed(removedAddressMember);
 				}
 			}
 		}
