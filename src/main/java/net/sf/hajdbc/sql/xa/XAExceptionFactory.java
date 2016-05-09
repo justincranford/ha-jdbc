@@ -99,6 +99,8 @@ public class XAExceptionFactory extends AbstractExceptionFactory<XAException>
 			{
 				return exception.errorCode == XAException.XA_HEURRB;
 			}
+			case FORGET:
+			case PREPARE:
 			default:
 			{
 				return false;

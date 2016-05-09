@@ -265,6 +265,8 @@ public class RegistryTest
 	@SuppressWarnings("serial")
 	class SimpleExceptionFactory implements ExceptionFactory<Exception>
 	{
+		private static final long serialVersionUID = 1L;
+
 		/**
 		 * {@inheritDoc}
 		 * @see net.sf.hajdbc.ExceptionFactory#createException(java.lang.Throwable)
