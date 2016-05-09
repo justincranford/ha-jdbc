@@ -132,7 +132,12 @@ public abstract class CommonDataSourceDatabase<Z extends javax.sql.CommonDataSou
 				if (value != null)
 				{
 					PropertyEditor editor = PropertyEditorManager.findEditor(descriptor.getPropertyType());
-					
+
+					if (editor == null)
+					{
+						throw new IllegalArgumentException("No property editor for type " + descriptor.getPropertyType());
+					}
+
 					editor.setAsText(value);
 					
 					descriptor.getWriteMethod().invoke(dataSource, editor.getValue());
