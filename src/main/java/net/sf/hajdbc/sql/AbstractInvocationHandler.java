@@ -202,29 +202,69 @@ public class AbstractInvocationHandler<Z, D extends Database<Z>, T, E extends Ex
 	
 	private <R> R createResult(InvocationResultFactory<Z, D, R> factory, SortedMap<D, R> resultMap) throws E
 	{
-		DatabaseCluster<Z, D> cluster = this.proxyFactory.getDatabaseCluster();
+		final DatabaseCluster<Z, D> cluster = this.proxyFactory.getDatabaseCluster();
 		
 		if (resultMap.isEmpty())
 		{
 			throw this.proxyFactory.getExceptionFactory().createException(Messages.NO_ACTIVE_DATABASES.getMessage(cluster));
 		}
 		
-		Iterator<Map.Entry<D, R>> results = resultMap.entrySet().iterator();
-		R primaryResult = results.next().getValue();
-		
+		final Iterator<Map.Entry<D, R>> results = resultMap.entrySet().iterator();
+		final Map.Entry<D, R> primaryEntry = results.next();
+		final R primaryResult = primaryEntry.getValue();
+
+		boolean logPrimaryResultsArray = true;	// log primary results only once when a secondary different is detected
+
 		while (results.hasNext())
 		{
-			Map.Entry<D, R> entry = results.next();
-			R result = entry.getValue();
+			final Map.Entry<D, R> secondaryEntry = results.next();
+			final R secondaryResult = secondaryEntry.getValue();
 			
-			if (factory.differs(primaryResult, result))
+			if (factory.differs(primaryResult, secondaryResult))	// could be a collection or array such as int[] from PreparedStatement.executeBatch()
 			{
 				results.remove();
-				D database = entry.getKey();
-				
-				if (cluster.deactivate(database, cluster.getStateManager()))
+				final D secondaryDatabase = secondaryEntry.getKey();
+
+				if (cluster.deactivate(secondaryDatabase, cluster.getStateManager()))	// deactivate, return true if it was not already deactivated by some other thread
 				{
-					this.logger.log(Level.ERROR, Messages.DATABASE_INCONSISTENT.getMessage(), database, cluster, primaryResult, result);
+					this.logger.log(Level.ERROR, Messages.DATABASE_INCONSISTENT.getMessage(), secondaryDatabase, cluster, primaryResult, secondaryResult);		// log using toString()
+
+					// Log using toString() for int[] only show reference, so do supplementary logging for int[] returned by PreparedStatement.executeBatch()
+					if (primaryResult instanceof int[]) {
+						final int[] primaryResultsArray = (int[]) primaryResult;	// ASSUMPTION: NULL references have no class, so getting here implies not NULL
+						if (logPrimaryResultsArray) {
+							final D primaryDatabase = primaryEntry.getKey();
+							final StringBuilder primaryResultsMessage = new StringBuilder("Primary " + primaryDatabase.getId() + " size " + primaryResultsArray.length + ": ");
+							for(int i=0,l=primaryResultsArray.length; i<l; i++){
+								primaryResultsMessage.append(primaryResultsArray[i]).append(",");
+							}
+							primaryResultsMessage.setLength(primaryResultsMessage.length()-1);
+							this.logger.log(Level.ERROR, primaryResultsMessage.toString());
+							logPrimaryResultsArray = false;	// skip repeated logging if multiple secondary mismatches
+						}
+
+						if (secondaryResult == null) {
+							this.logger.log(Level.ERROR, "Secondary " + secondaryDatabase.getId() + " null");
+						} else if (!(secondaryResult instanceof int[])) {
+							this.logger.log(Level.ERROR, "Secondary " + secondaryDatabase.getId() + " class mismatch " + secondaryResult.getClass().getCanonicalName());
+						} else {
+							final int[] secondaryResultsArray = (int[]) secondaryResult;
+
+							int numMatches = 0;	// count matches, but careful of JDBC drivers returning shorter/partial return code array versus the requested batch size
+							for(int i=0,l=Math.min(primaryResultsArray.length,secondaryResultsArray.length); i<l; i++){
+								if (primaryResultsArray[i]==secondaryResultsArray[i]) {
+									numMatches++;
+								}
+							}
+
+							final StringBuilder secondaryResultsMessage = new StringBuilder("Secondary " + secondaryDatabase.getId() + " size " + secondaryResultsArray.length + " matches " + numMatches + ": ");
+							for(int i=0,l=secondaryResultsArray.length; i<l; i++){
+								secondaryResultsMessage.append(secondaryResultsArray[i]).append(",");
+							}
+							secondaryResultsMessage.setLength(secondaryResultsMessage.length()-1);
+							this.logger.log(Level.ERROR, secondaryResultsMessage.toString());
+						}
+					}
 				}
 			}
 		}
